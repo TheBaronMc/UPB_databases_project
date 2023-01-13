@@ -429,15 +429,15 @@ INSERT INTO CHEFS (CHEF_ID, START_DATE, ENDING_DATE, ORGANIZATION_ID, PERSON_ID)
 
 -- populate events table
 INSERT INTO EVENTS (EVENT_ID, NAME, MEETING_POINT, STARTING_DATE, ENDING_DATE)
-    VALUES (1, 'Christmas Eve', 'Parc Kiseleff', TO_DATE( 'December 24, 2022', 'MONTH DD, YYYY'), NULL);
+    VALUES (1, 'Christmas Eve', 'Parc Kiseleff', TO_DATE( 'December 24, 2022', 'MONTH DD, YYYY'), TO_DATE( 'December 24, 2022', 'MONTH DD, YYYY'));
 INSERT INTO EVENTS (EVENT_ID, NAME, MEETING_POINT, STARTING_DATE, ENDING_DATE)
-    VALUES (2, 'Outdoor games', 'Tour Eiffel', TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'), NULL);
+    VALUES (2, 'Outdoor games', 'Tour Eiffel', TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'), TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'));
 INSERT INTO EVENTS (EVENT_ID, NAME, MEETING_POINT, STARTING_DATE, ENDING_DATE)
     VALUES (3, 'Hike in the mountains', 'Train station', TO_DATE( 'October 14, 2022', 'MONTH DD, YYYY'), TO_DATE( 'October 16, 2022', 'MONTH DD, YYYY'));
 INSERT INTO EVENTS (EVENT_ID, NAME, MEETING_POINT, STARTING_DATE, ENDING_DATE)
-    VALUES (4, 'National Day', 'At the church', TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'), NULL);
+    VALUES (4, 'National Day', 'At the church', TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'), TO_DATE( 'October 19, 2022', 'MONTH DD, YYYY'));
 INSERT INTO EVENTS (EVENT_ID, NAME, MEETING_POINT, STARTING_DATE, ENDING_DATE)
-    VALUES (5, 'Journée à la plage', 'Gare', TO_DATE( 'July 19, 2022', 'MONTH DD, YYYY'), NULL);
+    VALUES (5, 'Journée à la plage', 'Gare', TO_DATE( 'July 19, 2022', 'MONTH DD, YYYY'), TO_DATE( 'July 19, 2022', 'MONTH DD, YYYY'));
 
 -- populate sponsors table
 INSERT INTO SPONSORS (SPONSOR_ID, NAME, PHONE_NUMBER, EMAIL, LINK, PRIVATE)
@@ -482,3 +482,101 @@ INSERT INTO PROGRAM (EVENT_ID, ANIMATION_ID) VALUES (3, 2);
 INSERT INTO PROGRAM (EVENT_ID, ANIMATION_ID) VALUES (3, 1);
 INSERT INTO PROGRAM (EVENT_ID, ANIMATION_ID) VALUES (2, 3);
 INSERT INTO PROGRAM (EVENT_ID, ANIMATION_ID) VALUES (4, 1);
+
+
+-- Queries
+-- Get all organizations chefs who has an organization which has been sponsored by RED BULL
+SELECT CHEFS.*
+FROM SPONSORS INNER JOIN ORGANIZATION_HELPER 
+    ON SPONSORS.SPONSOR_ID = ORGANIZATION_HELPER.SPONSOR_ID 
+    INNER JOIN ORGANIZATIONS 
+    ON ORGANIZATIONS.ORGANIZATION_ID = ORGANIZATION_HELPER.ORGANIZATION_ID
+    INNER JOIN CHEFS
+    ON ORGANIZATIONS.ORGANIZATION_ID = CHEFS.ORGANIZATION_ID
+WHERE SPONSORS.NAME='RED BULL'
+-- Get the latest event which does not propose Gluten in an animation
+WITH NON_GLUTEN_EVENT AS (SELECT EVENTS.NAME, EVENTS.STARTING_DATE
+FROM (SELECT ANIMATION_ID
+FROM ANIMATIONS
+WHERE NOT ANIMATION_ID IN (SELECT DISTINCT ANIMATION_ID
+FROM (SELECT ALLERGEN_ID FROM ALLERGENS WHERE NAME='Gluten')
+    JOIN FOOD_COMPOSITIONS
+    USING (ALLERGEN_ID)
+    JOIN FOODS
+    USING (FOOD_ID)
+    JOIN ANIMATION_FOOD_PROPOSITIONS
+    USING (FOOD_ID))) JOIN PROGRAM USING (ANIMATION_ID) JOIN EVENTS USING (EVENT_ID))
+SELECT NAME
+FROM NON_GLUTEN_EVENT
+WHERE STARTING_DATE IN (SELECT MAX(STARTING_DATE) FROM NON_GLUTEN_EVENT)
+-- List all the teams which participate to event longer than one day
+WITH EVENT_LONGER_THEN_A_DAY AS (SELECT * FROM EVENTS WHERE ENDING_DATE - STARTING_DATE > 0)
+SELECT TEAM_ID, TEAMS.NAME
+FROM EVENT_LONGER_THEN_A_DAY JOIN EVENTS_CREATION USING (EVENT_ID)
+    JOIN ORGANIZATIONS USING (ORGANIZATION_ID)
+    JOIN TEAMS USING (ORGANIZATION_ID)
+-- List teams with a scout chef who has been a scout in the past
+SELECT TEAMS.*
+FROM TEAMS INNER JOIN SCOUT_CHEFS ON TEAMS.TEAM_ID=SCOUT_CHEFS.TEAM_ID
+    INNER JOIN PERSONS ON SCOUT_CHEFS.PERSON_ID=PERSONS.PERSON_ID
+    INNER JOIN SCOUTS ON PERSONS.PERSON_ID=SCOUTS.SCOUT_ID
+-- Get the second country with the most number of organization
+WITH NB_ORG_COUNTRIES AS (SELECT COUNTRIES.NAME, COUNT(1) NbOrganization
+FROM COUNTRIES INNER JOIN CITIES ON COUNTRIES.COUNTRY_ID=CITIES.COUNTRY_ID
+    INNER JOIN ORGANIZATIONS ON CITIES.CITY_ID=ORGANIZATIONS.ORGANIZATION_ID
+GROUP BY COUNTRIES.NAME)
+SELECT NAME
+FROM NB_ORG_COUNTRIES
+WHERE NbOrganization IN (SELECT MAX(NbOrganization) FROM (
+    SELECT NbOrganization FROM NB_ORG_COUNTRIES
+    MINUS
+    SELECT MAX(NbOrganization) FROM NB_ORG_COUNTRIES))
+-- Count how many time each allergen has been found in events of french organizations
+WITH french_organizations as (SELECT organization_id, organizations.name
+FROM countries JOIN cities USING (country_id)
+    JOIN organizations USING (city_id)
+WHERE countries.name='France')
+SELECT allergens.name, COUNT(1) as NbTime
+FROM french_organizations JOIN events_creation USING (organization_id)
+    JOIN events USING (event_id)
+    JOIN program USING (event_id)
+    JOIN animations USING (animation_id)
+    JOIN animation_food_propositions USING (animation_id)
+    JOIN foods USING (food_id)
+    JOIN food_compositions USING (food_id)
+    JOIN allergens USING (allergen_id)
+GROUP BY allergens.name
+ORDER BY NbTime DESC
+-- Count number of organization per continent
+SELECT continents.name, COUNT(organization_id) as NbOrganization
+FROM continents FULL OUTER JOIN countries ON continents.continent_id=countries.continent_id
+    FULL OUTER JOIN cities ON countries.country_id=cities.country_id
+    FULL OUTER JOIN organizations ON cities.city_id=organizations.city_id
+GROUP BY continents.name
+ORDER BY NbOrganization DESC
+-- Get the organization(s) with the oldest scout(s)
+WITH OldestScouts AS (SELECT person_id, scouts.scout_id, scouts.team_id, first_name, last_name, birth_date
+    FROM scouts JOIN persons USING (person_id)
+    WHERE birth_date IN (SELECT MIN(birth_date)
+    FROM scouts JOIN persons USING (person_id)
+    WHERE DEATH_DATE IS NULL AND ENDING_DATE IS NULL))
+SELECT organization_id, organizations.name, first_name || ' ' || last_name Scout, birth_date
+FROM teams JOIN OldestScouts USING (team_id)
+JOIN organizations USING (organization_id)
+-- Get the last event organized by the organization with the must number os sponsors
+WITH OrgByEvent AS (SELECT organization_id, organizations.name, COUNT(1) as NbSponsors
+    FROM organizations JOIN organization_helper USING (organization_id)
+    GROUP BY organization_id, organizations.name)
+SELECT event_id, events.name, starting_date
+FROM OrgByEvent JOIN events_creation USING (organization_id)
+JOIN events USING (event_id)
+WHERE NbSponsors IN (SELECT MAX(NbSponsors) FROM OrgByEvent)
+    AND starting_date IN (SELECT MIN(starting_date)
+    FROM OrgByEvent JOIN events_creation USING (organization_id)
+    JOIN events USING (event_id)
+    WHERE NbSponsors IN (SELECT MAX(NbSponsors) FROM OrgByEvent))
+-- Foreach organizations, does the chef has been a scout?
+SELECT organization_id, organizations.name, CASE WHEN SCOUT_ID IS NULL THEN 'False' ELSE 'True' END AS OldScoutForChef
+FROM scout_chefs JOIN persons USING (person_id)
+JOIN organizations USING (organization_id)
+WHERE ending_date IS NULL
